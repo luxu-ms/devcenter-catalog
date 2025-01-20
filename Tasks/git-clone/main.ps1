@@ -232,6 +232,7 @@ function InstallWinGet {
     pwsh.exe -MTA -Command "Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted"
 }
 
+
 # install git if it's not already installed
 if (!(Get-Command git -ErrorAction SilentlyContinue)) {
     # if winget is available, use it to install git
@@ -255,43 +256,57 @@ if (!(Get-Command git -ErrorAction SilentlyContinue)) {
         # install git via winget
         Write-Host "Installing git with Install-WinGetPackage"
         $mtaFlag = "-MTA"
+        $scopeFlagValue = "SystemOrUnknown"
         if ($PsInstallScope -eq "CurrentUser") {
             $mtaFlag = ""
+            $scopeFlagValue = "UserOrUnknown"
         }
 
         $tempOutFile = [System.IO.Path]::GetTempFileName() + ".out.json"
-        $installGitCommand = "Install-WinGetPackage -Source winget -Id Git.Git | ConvertTo-Json -Depth 10 | Tee-Object -FilePath '$($tempOutFile)'"
-        $processCreation = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="C:\Program Files\PowerShell\7\pwsh.exe $($mtaFlag) -Command `"$($installGitCommand)`""}
-        if (!($processCreation) -or !($processCreation.ProcessId)) {
-            Write-Error "Failed to install Git.Git package. Process creation failed."
-            exit 1
-        }
 
-        $process = Get-Process -Id $processCreation.ProcessId
-        $handle = $process.Handle # cache process.Handle so ExitCode isn't null when we need it below
-        $process.WaitForExit()
-        $installExitCode = $process.ExitCode
-        if ($installExitCode -ne 0) {
-            Write-Error "Failed to install Git.Git with Install-WinGetPackage, error code $($installExitCode)."
-            # this was the last try, so exit with the install exit code
-            exit $installExitCode
-        }
-
-        # read the output file and write it to the console
-        if (Test-Path -Path $tempOutFile) {
-            $unitResults = Get-Content -Path $tempOutFile -Raw | Out-String
-            Write-Host $unitResults
-            Remove-Item -Path $tempOutFile -Force
-            # If there are any errors in the package installation, we need to exit with a non-zero code
-            $unitResultsObject = $unitResults | ConvertFrom-Json
-            if ($unitResultsObject.Status -ne "Ok") {
-                Write-Error "There were errors installing the Git.Git package."
+        $installCommandBlock = {
+            $installGitCommand = "Install-WinGetPackage -Scope $($scopeFlagValue) -Source winget -Id Git.Git | ConvertTo-Json -Depth 10 | Tee-Object -FilePath '$($tempOutFile)'"
+            $processCreation = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="C:\Program Files\PowerShell\7\pwsh.exe $($mtaFlag) -Command `"$($installGitCommand)`""}
+            if (!($processCreation) -or !($processCreation.ProcessId)) {
+                Write-Error "Failed to install Git.Git package. Process creation failed."
                 exit 1
             }
-        }
-        else {
-            Write-Host "Couldn't find output file for Git.Git installation, assuming fail."
-            exit 1
+    
+            $process = Get-Process -Id $processCreation.ProcessId
+            $handle = $process.Handle # cache process.Handle so ExitCode isn't null when we need it below
+            $process.WaitForExit()
+            $installExitCode = $process.ExitCode
+            if ($installExitCode -ne 0) {
+                Write-Error "Failed to install Git.Git with Install-WinGetPackage, error code $($installExitCode)."
+                # this was the last try, so exit with the install exit code
+                exit $installExitCode
+            }
+    
+            # read the output file and write it to the console
+            if (Test-Path -Path $tempOutFile) {
+                $unitResults = Get-Content -Path $tempOutFile -Raw | Out-String
+                Write-Host $unitResults
+                Remove-Item -Path $tempOutFile -Force
+                # If there are any errors in the package installation, we need to exit with a non-zero code
+                $unitResultsObject = $unitResults | ConvertFrom-Json
+    
+                # If the initial scope didn't produce an installer, retry with an "Any" scope
+                if (($unitResultsObject.Status -eq "NoApplicableInstallers") -and ($scopeFlagValue -ne "Any")) {
+                    ([ref]$scopeFlagValue).Value = "Any"
+                    .$installCommandBlock
+                }
+    
+                # If there are any errors in the package installation, we need to exit with a non-zero code
+                if ($unitResultsObject.Status -ne "Ok") {
+                    Write-Error "There were errors installing the package."
+                    exit 1
+                }
+            }
+            else {
+                Write-Host "Couldn't find output file for Git.Git installation, assuming fail."
+                exit 1
+            }
+            .$installCommandBlock
         }
 
         # add git to path
@@ -322,44 +337,58 @@ if (!(Get-Command git-lfs -ErrorAction SilentlyContinue)) {
         # install git-lfs via winget
         Write-Host "Installing git-lfs with Install-WinGetPackage"
         $mtaFlag = "-MTA"
+        $scopeFlagValue = "SystemOrUnknown"
         if ($PsInstallScope -eq "CurrentUser") {
             $mtaFlag = ""
+            $scopeFlagValue = "UserOrUnknown"
         }
 
         $tempOutFile = [System.IO.Path]::GetTempFileName() + ".out.json"
-        $installGitLfsCommand = "Install-WinGetPackage -Source winget -Id GitHub.GitLFS | ConvertTo-Json -Depth 10 | Tee-Object -FilePath '$($tempOutFile)'"
-        $processCreation = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="C:\Program Files\PowerShell\7\pwsh.exe $($mtaFlag) -Command `"$($installGitLfsCommand)`""}
-        if (!($processCreation) -or !($processCreation.ProcessId)) {
-            Write-Error "Failed to install git-lfs package. Process creation failed."
-            exit 1
-        }
 
-        $process = Get-Process -Id $processCreation.ProcessId
-        $handle = $process.Handle # cache process.Handle so ExitCode isn't null when we need it below
-        $process.WaitForExit()
-        $installExitCode = $process.ExitCode
-        if ($installExitCode -ne 0) {
-            Write-Error "Failed to install git-lfs with Install-WinGetPackage, error code $($installExitCode)."
-            # this was the last try, so exit with the install exit code
-            exit $installExitCode
-        }
-
-        # read the output file and write it to the console
-        if (Test-Path -Path $tempOutFile) {
-            $unitResults = Get-Content -Path $tempOutFile -Raw | Out-String
-            Write-Host $unitResults
-            Remove-Item -Path $tempOutFile -Force
-            # If there are any errors in the package installation, we need to exit with a non-zero code
-            $unitResultsObject = $unitResults | ConvertFrom-Json
-            if ($unitResultsObject.Status -ne "Ok") {
-                Write-Error "There were errors installing the GitHub.GitLFS package."
+        $installCommandBlock = {
+            $installGitLfsCommand = "Install-WinGetPackage -Scope $($scopeFlagValue) -Source winget -Id GitHub.GitLFS | ConvertTo-Json -Depth 10 | Tee-Object -FilePath '$($tempOutFile)'"
+            $processCreation = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine="C:\Program Files\PowerShell\7\pwsh.exe $($mtaFlag) -Command `"$($installGitLfsCommand)`""}
+            if (!($processCreation) -or !($processCreation.ProcessId)) {
+                Write-Error "Failed to install GitHub.GitLFS package. Process creation failed."
                 exit 1
             }
-        }
-        else {
-            Write-Host "Couldn't find output file for GitHub.GitLFS installation, assuming fail."
-            exit 1
-        }
+    
+            $process = Get-Process -Id $processCreation.ProcessId
+            $handle = $process.Handle # cache process.Handle so ExitCode isn't null when we need it below
+            $process.WaitForExit()
+            $installExitCode = $process.ExitCode
+            if ($installExitCode -ne 0) {
+                Write-Error "Failed to install GitHub.GitLFS with Install-WinGetPackage, error code $($installExitCode)."
+                # this was the last try, so exit with the install exit code
+                exit $installExitCode
+            }
+    
+            # read the output file and write it to the console
+            if (Test-Path -Path $tempOutFile) {
+                $unitResults = Get-Content -Path $tempOutFile -Raw | Out-String
+                Write-Host $unitResults
+                Remove-Item -Path $tempOutFile -Force
+                # If there are any errors in the package installation, we need to exit with a non-zero code
+                $unitResultsObject = $unitResults | ConvertFrom-Json
+    
+                # If the initial scope didn't produce an installer, retry with an "Any" scope
+                if (($unitResultsObject.Status -eq "NoApplicableInstallers") -and ($scopeFlagValue -ne "Any")) {
+                    ([ref]$scopeFlagValue).Value = "Any"
+                    .$installCommandBlock
+                }
+    
+                # If there are any errors in the package installation, we need to exit with a non-zero code
+                if ($unitResultsObject.Status -ne "Ok") {
+                    Write-Error "There were errors installing the GitHub.GitLFS package."
+                    exit 1
+                }
+            }
+            else {
+                Write-Host "Couldn't find output file for GitHub.GitLFS installation, assuming fail."
+                exit 1
+            }
+            .$installCommandBlock
+        }        
 
         # add git-lfs to path
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User") + ";C:\Program Files\Git LFS"
